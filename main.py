@@ -1,105 +1,142 @@
-import json
+"""Entry point for running the multi-agent automation framework."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import operator
 import os
-from datetime import datetime
-from Agents.ammar import Ammar
-from Agents.hassan import Hassan
-from Agents.kofahi import Kofahi
-from Agents.rakan import Rakan
-from Agents.salah import Salah
-from Agents.sajed import Sajed
+import sys
+from pathlib import Path
+from typing import Iterable, List
 
-API_KEY = os.getenv("OPENAI_API_KEY") or 'YOUR_API_KEY'
+from Agents import CoordinatorAgent, ExecutorAgent, PlannerAgent, ReviewerAgent
+from skills import SkillRegistry
+from utils import initialise_log_file
+from workflow import AutomationWorkflow, Task
 
-def initialize_log_file(target_ip, scan_description):
-    log_directory = "./Logs"
-    os.makedirs(log_directory, exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-    log_file_name = f"log-{timestamp}.json"
-    log_file_path = os.path.join(log_directory, log_file_name)
-    
-    log_data = {
-        "target_ip": target_ip,
-        "scan_description": scan_description,
-        "output": []
+
+def load_tasks(task_file: Path) -> List[Task]:
+    if not task_file.exists():
+        raise FileNotFoundError(f"Task file '{task_file}' does not exist.")
+
+    import json
+
+    raw_tasks = json.loads(task_file.read_text())
+
+    tasks: List[Task] = []
+    for item in raw_tasks:
+        tasks.append(
+            Task(
+                name=item["name"],
+                objective=item["objective"],
+                context=item.get("context"),
+                deliverable=item.get("deliverable"),
+                constraints=item.get("constraints"),
+            )
+        )
+    return tasks
+
+
+def build_skill_registry() -> SkillRegistry:
+    registry = SkillRegistry()
+
+    # A safe arithmetic evaluator inspired by AutoGen's calculator tools.
+    allowed_operators = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.Pow: operator.pow,
+        ast.Mod: operator.mod,
     }
-    
-    with open(log_file_path, "w") as log_file:
-        json.dump(log_data, log_file, indent=2)
-    
-    return log_file_path
 
-def main():
-    target_ip = "REPLACE TARGET"
-    scan_description = "EX: find if this target is vulnerable to any exploit on port 22, only using nmap, nothing more"
-    log_file_path = initialize_log_file(target_ip, scan_description)
-    
-    ammar = Ammar(API_KEY)
-    hassan = Hassan(API_KEY)
-    kofahi = Kofahi(API_KEY)
-    rakan = Rakan(API_KEY)
-    salah = Salah(API_KEY)
-    sajed = Sajed(API_KEY)
-    
-    findings = []
+    def evaluate_math(expression: str) -> str:
+        """Safely evaluate a simple arithmetic expression."""
 
-    print("Initial Strategy:")
-    strategy = ammar.generate_strategy(target_ip, scan_description, log_file_path=log_file_path)
-    findings.append({"strategy": strategy})
+        def _eval(node: ast.AST) -> float:
+            if isinstance(node, ast.Expression):
+                return _eval(node.body)
+            if isinstance(node, ast.BinOp) and type(node.op) in allowed_operators:
+                return allowed_operators[type(node.op)](_eval(node.left), _eval(node.right))
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+                value = _eval(node.operand)
+                return value if isinstance(node.op, ast.UAdd) else -value
+            if isinstance(node, ast.Num):  # pragma: no cover - Python <3.8 compat
+                return float(node.n)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            raise ValueError("Unsupported expression")
 
-    while True:
-        reviewed_strategy = hassan.review_strategy(strategy, scan_description, log_file_path=log_file_path)
-        findings.append({"reviewed_strategy": reviewed_strategy})
+        tree = ast.parse(expression, mode="eval")
+        result = _eval(tree)
+        return str(result)
 
-        if reviewed_strategy["approved"]:
-            commands = strategy["strategy"]
-            output = salah.execute_commands(commands, target_ip, scan_description, kofahi, ammar, rakan, log_file_path=log_file_path)
-            print("Command Output:")
-            print(output)
-            findings.append({"commands": commands, "output": output})
-            print("Hassan's Thoughts on the scan result:")
-            hassan_assessment = hassan.review_output(output, scan_description, log_file_path=log_file_path)
-            findings.append({"hassan_assessment": hassan_assessment})
+    registry.register(
+        "evaluate_math",
+        evaluate_math,
+        "Safely evaluate arithmetic expressions containing +, -, *, /, %, and **.",
+    )
 
-            if hassan_assessment["satisfactory"]:
-                print("Scan completed. Client's requirements have been met.")
-                break
-            else:
-                feedback = hassan_assessment["feedback"]
-                strategy = ammar.generate_strategy(target_ip, scan_description, feedback=feedback, log_file_path=log_file_path)
-                findings.append({"updated_strategy_based_on_feedback": strategy})
-                print("Updated strategy based on Hassan's feedback:")
-        else:
-            feedback = reviewed_strategy["feedback"]
-            print("Hassan's feedback:")
-            print("Updated strategy based on Hassan's feedback:")
-            strategy = ammar.generate_strategy(target_ip, scan_description, feedback=feedback, log_file_path=log_file_path)
-            findings.append({"updated_strategy_based_on_feedback": strategy})
+    return registry
 
-    findings_file = "findings.json"
-    with open(findings_file, "w") as f:
-        json.dump(findings, f, indent=2)
 
-    print("Findings Report:")
-    report = sajed.generate_report(target_ip, scan_description, findings_file, log_file_path=log_file_path)
+def parse_args(argv: Iterable[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the automation workflow.")
+    parser.add_argument(
+        "--tasks",
+        type=Path,
+        default=Path("tasks/example_tasks.json"),
+        help="Path to a JSON file describing the tasks to execute.",
+    )
+    parser.add_argument(
+        "--run-name",
+        default="automation-run",
+        help="Name used when creating log files and reports.",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=Path("reports"),
+        help="Directory where Markdown reports will be stored.",
+    )
+    return parser.parse_args(list(argv))
 
-    while True:
-        hassan_review = hassan.review_report(report, log_file_path=log_file_path)
-        findings.append({"hassan_review": hassan_review})
-        print("Hassan's Review:")
-        if hassan_review["Report Approval"]:
-            print("Findings report has been approved by Hassan.")
-            break
-        else:
-            feedback = hassan_review["feedback"]
-            print("Hassan's feedback:")
-            report = sajed.generate_report(target_ip, scan_description, findings_file, feedback=feedback, log_file_path=log_file_path)
-            print("Updated Findings Report:")
 
-    report_file = "findings_report.md"
-    with open(report_file, "w") as f:
-        f.write(report)
-    print(f"Findings report saved as {report_file}")
+def main(argv: Iterable[str] | None = None) -> None:
+    args = parse_args(argv or sys.argv[1:])
 
-if __name__ == '__main__':
+    tasks = load_tasks(args.tasks)
+    if not tasks:
+        print("No tasks defined in the provided task file.")
+        return
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Provide a valid key to run the automation workflow."
+        )
+
+    log_file_path = initialise_log_file(args.run_name)
+    skill_registry = build_skill_registry()
+
+    planner = PlannerAgent(api_key=api_key)
+    reviewer = ReviewerAgent(api_key=api_key)
+    coordinator = CoordinatorAgent(api_key=api_key)
+    executor = ExecutorAgent(skill_registry, api_key=api_key)
+
+    workflow = AutomationWorkflow(
+        planner,
+        executor,
+        reviewer,
+        coordinator=coordinator,
+        log_file_path=log_file_path,
+        reports_dir=args.reports_dir,
+    )
+
+    workflow.run_all(tasks)
+    print(f"Completed automation run. Reports saved to {args.reports_dir.resolve()}")
+
+
+if __name__ == "__main__":
     main()
