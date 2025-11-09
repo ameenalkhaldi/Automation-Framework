@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Marketing blog outline",
+    "objective": "Draft a blog post outline explaining how multi-agent automation accelerates business workflows.",
+    "context": "Target operations teams at fast-growing startups and emphasise collaboration between planner, executor, and reviewer personas.",
+    "deliverable": "A Markdown outline with sections and bullet points ready for content writers.",
+    "constraints": [
+      "Limit the outline to no more than seven major sections.",
+      "Highlight at least one comparison with traditional single-agent approaches."
+    ]
+  },
+  {
+    "name": "Internal process improvement memo",
+    "objective": "Summarise opportunities to introduce skill-based automation within our internal analytics workflow.",
+    "context": "Assume the company currently relies on manual spreadsheet updates and wants to adopt LLM powered agents.",
+    "deliverable": "A concise memo with recommendations and next steps.",
+    "constraints": [
+      "Prioritise changes that can be validated within two weeks.",
+      "Include risk mitigation strategies for cross-team adoption."
+    ]
+  }
+]

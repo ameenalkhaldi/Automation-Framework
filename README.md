@@ -1,137 +1,100 @@
-# Automated Vulnerability Scanning with Agentic AI
+# Multi-Agent Automation Framework
 
-This project demonstrates an automated vulnerability scanning system using an Agentic AI approach. The system consists of multiple AI agents that collaborate to strategize, generate commands, and execute scans based on the client's description, without the need for human intervention.
+This project transforms the original penetration-testing prototype into a **general-purpose, multi-agent automation framework**. Specialists powered by large language models collaborate to plan, execute, review, and report on arbitrary tasks ranging from marketing research to internal process optimisation. The orchestration pattern draws inspiration from systems such as [Microsoft AutoGen](https://github.com/microsoft/autogen) while remaining lightweight and easy to customise.
 
-Please note that this project serves as a rough proof of concept, and not everything might work seamlessly. It's important to keep in mind that commands or scripts that are interactive and require user input, such as `msfconsole`, may not function as intended within this framework.
+> **Important:** Running the framework requires an OpenAI API key. All examples below assume the key is available through the `OPENAI_API_KEY` environment variable.
 
-## Prerequisites
+## Key Capabilities
 
-Before running this project, it is recommended to install the `kali-linux-default` metapackage, which includes a set of tools commonly used for penetration testing and vulnerability scanning. To install the metapackage, follow these steps:
+- **Task-centric workflows** – supply one or many tasks via JSON. Each task specifies objectives, optional context, constraints, and desired deliverables.
+- **Conversational planning loop** – a Planner agent decomposes the objective, a Reviewer critiques each proposal, and replanning occurs automatically until approval.
+- **Iterative execution** – an Executor agent follows the approved plan step-by-step. After every attempt the Reviewer can accept the result, request revisions, or trigger a full replanning cycle.
+- **Skill registry** – inspired by AutoGen tool-calling, the Executor can invoke registered Python “skills” (e.g., a safe math evaluator) to accelerate work. Custom skills are simple functions annotated with descriptions and automatically surfaced to the model.
+- **Coordinator synthesis** – a Coordinator agent introduces tasks and compiles Markdown summaries for stakeholders.
+- **Structured logging and reporting** – every run creates a JSON log under `logs/` and an artefact report for each task under `reports/`.
 
-1. Update your Kali Linux system:
+## Architecture Overview
+
+| Component | Responsibility |
+| --- | --- |
+| `PlannerAgent` | Breaks an objective into automation-ready steps with rationale and success criteria. |
+| `ExecutorAgent` | Executes steps, optionally calling skills, and produces artefacts for review. |
+| `ReviewerAgent` | Performs quality control on plans, step results, and the final output. |
+| `CoordinatorAgent` | Provides kickoff notes and synthesises the overall outcome in Markdown. |
+| `SkillRegistry` | Registers callable tools that agents can request, similar to AutoGen skills. |
+| `AutomationWorkflow` | Coordinates task progression, replanning, and report generation. |
+
+The agents maintain individual conversation histories so they can reference prior context without external state management. Replanning and re-execution loops are bounded to avoid infinite conversations, yet flexible enough to incorporate Reviewer feedback at any stage.
+
+## Comparison with Microsoft AutoGen
+
+| AutoGen Concept | This Framework |
+| --- | --- |
+| **Conversational agents** | Planner, Executor, Reviewer, and Coordinator maintain independent dialogues with persistent memory. |
+| **Tool/skill invocation** | `SkillRegistry` exposes Python callables to the Executor, mirroring AutoGen’s tool-calling pattern. |
+| **Group chat orchestration** | `AutomationWorkflow` sequences plan → review → execute loops, automatically requesting replans when the Reviewer rejects a step. |
+| **Human-readable summaries** | The Coordinator produces Markdown reports akin to AutoGen’s conversation summaries. |
+| **Extensibility** | Add new agents or skills by subclassing `Agent` or registering additional tools—no core refactor required. |
+
+While AutoGen offers a vast ecosystem, this repository focuses on an approachable core that you can extend or embed inside larger automation stacks.
+
+## Getting Started
+
+1. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
    ```
-   sudo apt update
-   sudo apt full-upgrade -y
+   *(Provide your own dependency list—at minimum `openai` and `colorama` are required.)*
+
+2. **Configure credentials**
+   ```bash
+   export OPENAI_API_KEY="sk-your-key"
    ```
 
-2. Install the `kali-linux-default` metapackage:
+3. **Review or edit tasks** – Tasks live under `tasks/` and follow this structure:
+   ```json
+   {
+     "name": "Marketing blog outline",
+     "objective": "Draft a blog post outline...",
+     "context": "Target operations teams...",
+     "deliverable": "A Markdown outline...",
+     "constraints": ["No more than seven sections", "Compare with single-agent approaches"]
+   }
    ```
-   sudo apt install -y kali-linux-default
+
+4. **Run the workflow**
+   ```bash
+   python main.py --tasks tasks/example_tasks.json --run-name demo-run
    ```
 
-Alternatively, you can use `kali-tweaks` to install the metapackage:
-1. Run `kali-tweaks`
-2. Navigate to the "Metapackages" tab
-3. Select the desired metapackages (e.g., `kali-linux-default`)
-4. Click "Apply" and then "OK"
-5. Supply your password when prompted
+   The script prints progress, stores a JSON trace in `logs/`, and generates Markdown reports inside `reports/`.
 
-For more information on Kali Linux metapackages, refer to the [official documentation](https://www.kali.org/docs/general-use/metapackages/).
+## Logs and Reports
 
-## OpenAI API Requirement
+- **Logs** (`logs/<run-name>-<timestamp>.json`) capture every agent message for auditing or analysis.
+- **Reports** (`reports/<task-name>.md`) consolidate the approved plan, execution timeline, reviewer verdict, and coordinator summary for each task.
 
-This project requires an OpenAI API key to function properly. The code is currently configured to use the `gpt-4-turbo` model, but you can modify it to use any other available model. To obtain an API key:
+## Extending the Framework
 
-1. Sign up for an account at [OpenAI](https://www.openai.com/) if you haven't already.
-2. Go to the [API Keys](https://platform.openai.com/account/api-keys) page in your account dashboard.
-3. Click on "Create new secret key" and copy the generated key.
-4. Set the `API_KEY` variable in the `main.py` file to your OpenAI API key.
+- **Add custom skills** by registering new functions in `build_skill_registry()` within `main.py`, or expose a registry in your own entry point. Provide descriptive docstrings and type-safe signatures so the Executor knows how to call them.
+- **Create specialised agents** by subclassing `Agent` in `agent.py` and crafting role-specific prompts. Plug them into `AutomationWorkflow` to experiment with new collaboration styles (e.g., researcher agents, data critics, domain experts).
+- **Integrate with other systems** by modifying `ExecutorAgent.execute_step` to call external APIs, trigger CI pipelines, or run local tooling before returning results to the Reviewer.
 
-Please note that using the OpenAI API incurs costs based on the number of tokens processed. Make sure to review the [pricing](https://openai.com/pricing) and set up appropriate limits and monitoring for your usage.
+## Sample Output
 
-# **WARNING**
+A condensed example illustrating the interplay between agents can be found in [`SampleRun.md`](SampleRun.md). It showcases:
 
-Please be aware that this script will execute commands on the system without prompting for authorization. Running this script implies that you grant permission for all commands suggested by the amazing Ammar. Exercise caution and ensure that you fully understand the implications before proceeding.
+- JSON planning output from the Planner
+- Reviewer critique followed by an approved revision
+- An Executor step that invokes the math skill
+- The final Markdown summary crafted by the Coordinator
 
-Note: This project is designed to run on Linux.
+## Roadmap Ideas
 
-## Overview
+- Support for non-OpenAI model providers via a pluggable client layer
+- Additional built-in skills (file system access, HTTP requests, knowledge-base retrieval)
+- Conversational dashboards to monitor agent discussions in real time
 
-The vulnerability scanning process is automated through the coordination of several AI agents, each with specific roles and responsibilities:
+## License
 
-- **Ammar**: Generates the initial strategy and provides input when needed.
-- **Hassan**: Reviews strategies, command outputs, and the final report.
-- **Kofahi**: Handles error scenarios and suggests fixes.
-- **Rakan**: Monitors the command execution output and determines if additional input is required.
-- **Salah**: Executes the commands generated by the agents.
-- **Sajed**: Generates the final findings report.
-
-The agents communicate with each other, exchanging information and feedback to iteratively refine the scanning process until a satisfactory result is achieved.
-
-### Flowchart
-
-![diagram](https://github.com/salah9003/Automated-Vulnerability-Scanning-with-Agentic-AI/assets/81641886/93a9fc04-1e7a-42c6-a5c3-d17167de1473)
-
-## Usage
-
-```
-python main.py
-```
-
-The scanning process will continue until a satisfactory result is achieved or if the agents determine that no further actions are required. The findings and outputs will be logged and stored in the `Logs` directory.
-
-A findings report is generated at the end in markdown format.
-
-### Findings Report
-
-The `findings_report.md` file, generated by Sajed, provides a comprehensive overview of the vulnerability scanning results.
-
-## Configuration
-
-The main configuration options can be found in the `main.py` file:
-
-- `target_ip`: Specify the target IP address for the vulnerability scan.
-- `scan_description`: Provide a description of the desired scan to guide the agents.
-
-## Logging
-
-The system generates log files in the `Logs` directory, capturing the outputs, findings, and agent interactions during the scanning process.
-
-
-
-## Why an Agentic AI Approach Was Used
-
-Recent research has demonstrated promising results in utilizing multi-agent systems based on Large Language Models (LLMs) for solving various complex tasks[\[1\]](https://arxiv.org/abs/2308.10848). The agentic AI approach, where multiple autonomous agents collaborate to strategize, generate commands, and execute scans, offers several key benefits over relying on a single AI agent:
-
-1. **Specialization and division of labor**: Each agent in the system can specialize in a particular area (e.g., strategy generation, error handling, command execution), allowing them to develop deep expertise and perform their roles more effectively[\[1\]](https://arxiv.org/abs/2308.10848)[\[2\]](https://arxiv.org/abs/2307.07924). This division of labor mirrors how human teams tackle complex projects.
-
-2. **Improved collaboration and problem-solving**: By enabling interactions and information sharing between diverse specialized agents, the overall system gains enhanced capabilities to understand requirements, decompose problems, explore multiple solutions, and adapt to changing conditions[\[1\]](https://arxiv.org/abs/2308.10848)[\[3\]](https://arxiv.org/abs/2402.16713). This collaborative approach has been shown to boost problem-solving accuracy and efficiency.
-
-3. **Robustness and adaptability**: With multiple agents involved, the system can be more robust to errors or limitations of any single agent[\[3\]](https://arxiv.org/abs/2402.16713). If one agent struggles, others can help compensate. Moreover, the multi-agent system can dynamically adjust roles, goals, and plans based on feedback and changing circumstances[\[1\]](https://arxiv.org/abs/2308.10848).
-
-4. **Scalability**: The agentic AI approach provides a scalable framework for tackling increasingly complex and open-ended problems that would overwhelm a single agent[1]. New specialized agents can be added to expand the system's capabilities as needed.
-
-5. **Alignment with real-world problem-solving**: Many real-world tasks, like vulnerability scanning, intrinsically involve multiple parties (e.g., scanners, strategists, reviewers) working together. The multi-agent approach more closely mirrors this reality compared to a single generalist agent[\[2\]](https://arxiv.org/abs/2307.07924).
-
-While research on agentic AI systems is still in early stages, results so far point to their potential to enable more sophisticated, flexible, and effective problem-solving than single-agent approaches. As the technology matures, agentic AI could become an increasingly powerful paradigm to tackle complex challenges in cybersecurity and beyond.
-
-Citations:
-
-[1] Chen, Y., Perez, Y., & Shoham, Y. (2023). AgentVerse: Facilitating Multi-Agent Collaboration and Exploring Emergent Behaviors in Agents. arXiv preprint arXiv:2308.10848.
-https://arxiv.org/abs/2308.10848
-
-[2] Quan, A., Jiang, L., Bing, L., & Lyu, M. R. (2023). Communicative Agents for Software Development. arXiv preprint arXiv:2307.07924.
-https://arxiv.org/abs/2307.07924
-
-[3] Navigating Complexity: Orchestrated Problem Solving with Multi-Agent LLMs. (2024).
-https://arxiv.org/abs/2402.16713
-
-
-## Differences Between This Project and Automatic Vulnerability Scanners
-
-1. Multi-agent collaboration: This project uses multiple specialized AI agents that work together, while most scanners are monolithic systems.
-
-2. Adaptability: The agents iteratively refine the scanning strategy based on feedback and results, while traditional scanners follow a fixed, linear process.
-
-3. Natural language understanding: The agents can interpret natural language descriptions to guide the scanning process, while scanners typically require structured configurations.
-
-4. Contextual decision-making: The agents consider the context and results of each step to make decisions, while scanners simply execute a predefined set of checks.
-
-This project leverages the context of previous scan results to determine the next logical scan to perform. The agents, particularly Hassan, review the output of each command and provide feedback on whether the results are satisfactory or if additional scans are needed. This iterative, context-aware approach allows the system to dynamically adapt the scanning process based on the findings at each stage, ensuring a more comprehensive and targeted vulnerability assessment.
-
-
-
-## Disclaimer
-
-This project is intended for educational and research purposes only. The authors and contributors are not responsible for any misuse or damage caused by the use of this system. Always obtain proper authorization before performing vulnerability scans on any target system.
-
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
